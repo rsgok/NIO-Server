@@ -46,6 +46,7 @@ class IMServer implements Runnable {
                 e.printStackTrace();
             }
             if (count > 0) {
+                // 获取就绪的channel
                 Set<SelectionKey> selectionKeySet = selector.selectedKeys();
                 Iterator<SelectionKey> keyIterator = selectionKeySet.iterator();
                 SelectionKey selectionKey;
@@ -53,26 +54,33 @@ class IMServer implements Runnable {
                 while (keyIterator.hasNext()) {
                     selectionKey = keyIterator.next();
                     this.handleSelectionKey(selectionKey);
+                    // 移除SelectionKey对象
+                    // 当下次channel处于就绪，Selector仍然会吧这些key再次加入进来。
                     keyIterator.remove();
                 }
             }
         }
     }
 
+    // 处理selectionKey
     void handleSelectionKey(SelectionKey key) {
         if (!key.isValid()) return;
         if (key.isAcceptable()) {
+            // a connection was accepted by a ServerSocketChannel
             this.handleAcceptableKey(key);
         } else if (key.isReadable()) {
+            // a channel is ready for reading
             this.handleReadableKey(key);
         } else {
-            System.err.println("wrong");
+            System.err.println("condition we don't handle");
         }
     }
 
     void handleReadableKey(SelectionKey key) {
+        // 取得对应的channel
         SocketChannel socketChannel = (SocketChannel) key.channel();
-        ByteBuffer readBuffer = ByteBuffer.allocate(1024);
+        // 建立buffer，从channel中读取数据
+        ByteBuffer readBuffer = ByteBuffer.allocate(1024); // max byte num: 1024
         int readBytes;
         try {
             readBytes = socketChannel.read(readBuffer);
@@ -90,20 +98,25 @@ class IMServer implements Runnable {
             this.sendMsg(msg);
         } else if (readBytes < 0) {
             // 客户端断开
+            // 取消此键的通道到其选择器的注册
             key.cancel();
             try {
+                // 关闭该通道
                 socketChannel.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            // 从客户端列表中移除
             clientChannels.remove(socketChannel);
             System.out.println("client num: " + clientChannels.size());
         }
     }
 
-    // 接受到socket请求
+    // 接收到socket connect请求
     void handleAcceptableKey(SelectionKey key) {
+        // 获取server channel
         ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
+        // 待用的client channel
         SocketChannel socketChannel = null;
         try {
             socketChannel = serverSocketChannel.accept();
@@ -111,47 +124,36 @@ class IMServer implements Runnable {
             socketChannel.register(selector, SelectionKey.OP_READ);
         } catch (IOException e) {
             // 删除key
-            this.closeSelectionKey(key);
-            if (socketChannel != null) {
-                try {
-                    socketChannel.close();
-                } catch (IOException e1) {
-                    e1.printStackTrace();
-                }
+            // 取消此键的通道到其选择器的注册
+            key.cancel();
+            try {
+                // 关闭该通道
+                socketChannel.close();
+            } catch (IOException e1) {
+                e1.printStackTrace();
             }
             e.printStackTrace();
-        }
-        if (socketChannel != null) {
-            clientChannels.add(socketChannel);
-            System.out.println("client num: " + clientChannels.size());
+        } finally {
+            if (socketChannel != null) {
+                clientChannels.add(socketChannel);
+                System.out.println("client num: " + clientChannels.size());
+            }
         }
     }
 
+    // 发送消息
     void sendMsg(String msg) {
         byte[] bytes = msg.getBytes();
         System.out.println("sending client num: " + clientChannels.size());
-        int i = 0;
         for (SocketChannel channel : clientChannels) {
-            i++;
-            System.out.println("send msg to: " + i);
             ByteBuffer writeBuffer = ByteBuffer.allocate(bytes.length);
             writeBuffer.put(bytes);
             writeBuffer.flip();
             try {
+                // 将buffer中的数据写入channel
                 channel.write(writeBuffer);
             } catch (IOException e) {
                 e.printStackTrace();
-            }
-        }
-    }
-
-    void closeSelectionKey(SelectionKey key) {
-        key.cancel();
-        if (key.channel() != null) {
-            try {
-                key.channel().close();
-            } catch (IOException e1) {
-                e1.printStackTrace();
             }
         }
     }
